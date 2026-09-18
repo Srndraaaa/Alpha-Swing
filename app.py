@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import urllib.error
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -40,10 +41,14 @@ def score_one(client, db, sym):
     price = float(q.get("c", 0) or 0)
     cd = cache.get(db, "c:" + sym, TTL["candle"])
     if cd is None:
-        now = int(time.time())
-        cd = client.get("/stock/candle", {"symbol": sym, "resolution": "D",
-                                          "from": now - 400 * 86400, "to": now})
-        cache.set(db, "c:" + sym, cd)
+        try:
+            now = int(time.time())
+            cd = client.get("/stock/candle", {"symbol": sym, "resolution": "D",
+                                              "from": now - 400 * 86400, "to": now})
+        except urllib.error.HTTPError:
+            cd = {"c": [], "h": [], "l": [], "v": []}  # plan-gated: degrade, indicators 0 + DATA_TIPIS
+        else:
+            cache.set(db, "c:" + sym, cd)
     closes = [float(x) for x in cd.get("c", [])]
     highs = [float(x) for x in cd.get("h", closes)]
     lows = [float(x) for x in cd.get("l", closes)]
@@ -61,8 +66,12 @@ def score_one(client, db, sym):
     cons = "Buy" if rec and (rec[0].get("buy", 0) + rec[0].get("strongBuy", 0)) >= 10 else ("Hold" if rec else None)
     tgt = cache.get(db, "t:" + sym, TTL["other"])
     if tgt is None:
-        tgt = client.get("/stock/price-target", {"symbol": sym})
-        cache.set(db, "t:" + sym, tgt)
+        try:
+            tgt = client.get("/stock/price-target", {"symbol": sym})
+        except urllib.error.HTTPError:
+            tgt = {}  # plan-gated: fund scores partial + N/A
+        else:
+            cache.set(db, "t:" + sym, tgt)
     tpct = ((tgt.get("targetMean", 0) - price) / price * 100.0) if tgt and price else None
     s_fu, n_fu = scoring.pillar_fund(cons, tpct, None)
     ins = cache.get(db, "i:" + sym, TTL["other"])
