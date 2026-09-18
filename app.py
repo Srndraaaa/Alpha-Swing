@@ -49,10 +49,10 @@ def score_one(client, db, sym):
     lows = [float(x) for x in cd.get("l", closes)]
     vols = [float(x) for x in cd.get("v", [])]
     spy = cache.get(db, "c:SPY", TTL["candle"]) or {}
-    spy_c = [float(x) for x in spy.get("c", closes)]
+    spy_c = [float(x) for x in spy.get("c", [])]
     rs_val = scoring.mansfield(closes, spy_c)
     s_rs, n_rs = scoring.pillar_rs(rs_val)
-    weekly = closes[-150:][::5]
+    weekly = closes[-155:][::5]
     s_te, vcp_st = scoring.vcp(highs, lows, vols, weekly)
     rec = cache.get(db, "r:" + sym, TTL["other"])
     if rec is None:
@@ -64,8 +64,14 @@ def score_one(client, db, sym):
         tgt = client.get("/stock/price-target", {"symbol": sym})
         cache.set(db, "t:" + sym, tgt)
     tpct = ((tgt.get("targetMean", 0) - price) / price * 100.0) if tgt and price else None
-    s_fu, n_fu = scoring.pillar_fund(cons, tpct, 1.0)
-    s_fl, n_fl = scoring.pillar_flow(None, False, True, False)  # free tier: insider only
+    s_fu, n_fu = scoring.pillar_fund(cons, tpct, None)
+    ins = cache.get(db, "i:" + sym, TTL["other"])
+    if ins is None:
+        ins = client.get("/stock/insider-transactions", {"symbol": sym})
+        cache.set(db, "i:" + sym, ins)
+    txns = ins.get("data", []) if isinstance(ins, dict) else (ins if isinstance(ins, list) else [])
+    clean = bool(txns) and not any((t.get("change", 0) or 0) < 0 or t.get("transactionCode") == "S" for t in txns if isinstance(t, dict))
+    s_fl, n_fl = scoring.pillar_flow(None, False, clean, False)  # free tier: insider only
     pure = 10 + s_rs + s_te + s_fu + s_fl  # ponytail: macro fixed 10 offline; live regime adds via header
     final, bo = scoring.apply_blackout(pure, 30)
     a = scoring.atr(highs, lows, closes)
@@ -102,7 +108,8 @@ class AlphaSwing(App):
             tbl.add_column(c, key=c)
         for s in self.syms:
             tbl.add_row(s, "-", "-", "-", "-", "-", "-", "-", "-", key=s)
-        self.set_interval(self.refresh_sec, self.action_refresh)
+        self._slow = False
+        self._timer = self.set_interval(30, self.action_refresh)
         self.action_refresh()
 
     @work(thread=True, exclusive=True)
@@ -110,6 +117,8 @@ class AlphaSwing(App):
         from textual.worker import get_current_worker
         w = get_current_worker()
         n = len(syms)
+        if n == 0:
+            return
         batch = [syms[(self._offset + i) % n] for i in range(min(5, n))]
         self._offset = (self._offset + 5) % n
         for s in batch:  # 5 tickers/run keeps under 50/min; offset rotates full watchlist
@@ -125,6 +134,10 @@ class AlphaSwing(App):
     def _paint(self, r):
         # runs on UI thread (worker posts via call_from_thread)
         self.rows = [x for x in self.rows if x["ticker"] != r["ticker"]] + [r]
+        if not self._slow and len(self.rows) >= len(self.syms):
+            self._slow = True
+            self._timer.stop()
+            self._timer = self.set_interval(self.refresh_sec, self.action_refresh)
         self._refilter()
 
     def _q(self):
