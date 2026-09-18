@@ -22,7 +22,8 @@ Python + Textual stock-screener TUI. Single process: thread worker (stdlib `urll
 
 ## Gotchas (all bitten before — don't regress)
 
-- Textual 8.x: `from textual import work`, NOT `from textual.work import` (absent). `get_current_worker` still lives in `textual.worker`.
+- Textual 8.x: `from textual import work`, NOT `from textual.work import` (absent). `get_current_worker` still lives in `textual.worker`. `Worker.is_cancelled` is a **property** — calling it throws `TypeError: 'bool' object is not callable` and kills every worker run.
+- `cache.open_db` uses `check_same_thread=False` because the exclusive worker is the only thread that ever queries; the UI thread never touches the DB. If UI code ever queries, switch to per-thread connections.
 - VCP filter must be `!= "Ready"` — `"Ready" in "Not Ready"` is True (substring trap, also in spec's JS pseudocode).
 - Blackout math must be integer `(pure * 70) // 100` — `floor(90 * 0.70)` gives 62 via float `62.999…`, spec wants 63.
 - `vcp()` needs ≥31 weekly bars; `app.py` slices `closes[-155:][::5]` (a 150-bar tail yields only 30 and silently drops the +7 MTF points).

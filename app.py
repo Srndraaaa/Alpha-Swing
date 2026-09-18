@@ -131,7 +131,7 @@ class AlphaSwing(App):
         batch = [syms[(self._offset + i) % n] for i in range(min(5, n))]
         self._offset = (self._offset + 5) % n
         for s in batch:  # 5 tickers/run keeps under 50/min; offset rotates full watchlist
-            if w.is_cancelled():
+            if w.is_cancelled:  # Textual 8.x: property, not a method
                 return
             try:
                 r = score_one(self.client, self.db, s)

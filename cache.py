@@ -7,7 +7,9 @@ SCHEMA = "CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, t REAL, p TEXT)"
 
 
 def open_db(path):
-    db = sqlite3.connect(path)
+    # ponytail: shared across UI + exclusive worker threads; safe because the
+    # worker is exclusive (one run at a time) and the UI thread never queries.
+    db = sqlite3.connect(path, check_same_thread=False)
     db.execute(SCHEMA)
     return db
 
